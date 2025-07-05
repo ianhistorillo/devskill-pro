@@ -13,19 +13,27 @@ import { ChallengesList } from './components/Challenges/ChallengesList';
 import { ChallengeSolving } from './components/Challenges/ChallengeSolving';
 import { Reports } from './components/Reports/Reports';
 
+function LoadingScreen() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-purple-50">
+      <div className="text-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+        <h2 className="text-xl font-semibold text-gray-900 mb-2">DevSkill Pro</h2>
+        <p className="text-gray-600">Loading...</p>
+      </div>
+    </div>
+  );
+}
+
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuthContext();
 
   if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-      </div>
-    );
+    return <LoadingScreen />;
   }
 
   if (!user) {
-    return <Navigate to="/login" />;
+    return <Navigate to="/login" replace />;
   }
 
   return <>{children}</>;
@@ -34,12 +42,9 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 function AppRoutes() {
   const { user, loading } = useAuthContext();
 
+  // Show loading screen while auth is initializing
   if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-      </div>
-    );
+    return <LoadingScreen />;
   }
 
   return (
@@ -48,11 +53,11 @@ function AppRoutes() {
         <Route path="/" element={<Landing />} />
         <Route 
           path="/login" 
-          element={user ? <Navigate to="/dashboard" /> : <LoginForm />} 
+          element={user ? <Navigate to="/dashboard" replace /> : <LoginForm />} 
         />
         <Route 
           path="/register" 
-          element={user ? <Navigate to="/dashboard" /> : <RegisterForm />} 
+          element={user ? <Navigate to="/dashboard" replace /> : <RegisterForm />} 
         />
         <Route
           path="/dashboard"
@@ -113,6 +118,7 @@ function AppRoutes() {
             </ProtectedRoute>
           }
         />
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Layout>
   );

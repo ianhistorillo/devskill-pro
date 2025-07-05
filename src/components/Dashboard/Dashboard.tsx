@@ -5,6 +5,8 @@ import { StatsOverview } from './StatsOverview';
 import { RecentActivity } from './RecentActivity';
 import { QuickActions } from './QuickActions';
 import { ProgressChart } from './ProgressChart';
+import { AlertCircle, RefreshCw } from 'lucide-react';
+import toast from 'react-hot-toast';
 
 export function Dashboard() {
   const { user, profile } = useAuthContext();
@@ -12,6 +14,7 @@ export function Dashboard() {
   const [userAssessments, setUserAssessments] = useState<UserAssessment[]>([]);
   const [challenges, setChallenges] = useState<CodingChallenge[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (user) {
@@ -20,9 +23,18 @@ export function Dashboard() {
   }, [user]);
 
   const fetchDashboardData = async () => {
+    if (!user) {
+      setLoading(false);
+      return;
+    }
+
     try {
-      // Fetch available assessments
-      const { data: assessmentsData } = await supabase
+      console.log('📊 Fetching dashboard data...');
+      setLoading(true);
+      setError(null);
+
+      // Fetch available assessments - no timeout, simple query
+      const assessmentsPromise = supabase
         .from('assessments')
         .select(`
           *,
@@ -32,8 +44,8 @@ export function Dashboard() {
         .order('created_at', { ascending: false })
         .limit(6);
 
-      // Fetch user assessments
-      const { data: userAssessmentsData } = await supabase
+      // Fetch user assessments - no timeout, simple query
+      const userAssessmentsPromise = supabase
         .from('user_assessments')
         .select(`
           *,
@@ -42,12 +54,12 @@ export function Dashboard() {
             category:categories(*)
           )
         `)
-        .eq('user_id', user!.id)
+        .eq('user_id', user.id)
         .order('created_at', { ascending: false })
         .limit(10);
 
-      // Fetch coding challenges
-      const { data: challengesData } = await supabase
+      // Fetch coding challenges - no timeout, simple query
+      const challengesPromise = supabase
         .from('coding_challenges')
         .select(`
           *,
@@ -57,20 +69,80 @@ export function Dashboard() {
         .order('created_at', { ascending: false })
         .limit(6);
 
-      setAssessments(assessmentsData || []);
-      setUserAssessments(userAssessmentsData || []);
-      setChallenges(challengesData || []);
-    } catch (error) {
-      console.error('Error fetching dashboard data:', error);
+      // Execute all queries in parallel without timeouts
+      const [assessmentsResponse, userAssessmentsResponse, challengesResponse] = await Promise.all([
+        assessmentsPromise,
+        userAssessmentsPromise,
+        challengesPromise
+      ]);
+
+      // Handle responses
+      if (assessmentsResponse.error) {
+        console.error('❌ Failed to load assessments:', assessmentsResponse.error);
+        setAssessments([]);
+      } else {
+        setAssessments(assessmentsResponse.data || []);
+        console.log('✅ Assessments loaded:', assessmentsResponse.data?.length || 0);
+      }
+
+      if (userAssessmentsResponse.error) {
+        console.error('❌ Failed to load user assessments:', userAssessmentsResponse.error);
+        setUserAssessments([]);
+      } else {
+        setUserAssessments(userAssessmentsResponse.data || []);
+        console.log('✅ User assessments loaded:', userAssessmentsResponse.data?.length || 0);
+      }
+
+      if (challengesResponse.error) {
+        console.error('❌ Failed to load challenges:', challengesResponse.error);
+        setChallenges([]);
+      } else {
+        setChallenges(challengesResponse.data || []);
+        console.log('✅ Challenges loaded:', challengesResponse.data?.length || 0);
+      }
+
+      console.log('✅ Dashboard data loaded successfully');
+
+    } catch (error: any) {
+      console.error('💥 Dashboard data fetch failed:', error);
+      setError(error.message || 'Failed to load dashboard data');
+      toast.error('Failed to load dashboard data');
     } finally {
       setLoading(false);
     }
   };
 
+  const handleRetry = () => {
+    console.log('🔄 Retrying dashboard data fetch...');
+    fetchDashboardData();
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading your dashboard...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
+          <h2 className="text-xl font-semibold text-gray-900 mb-2">Failed to Load Dashboard</h2>
+          <p className="text-gray-600 mb-4">{error}</p>
+          <button
+            onClick={handleRetry}
+            className="inline-flex items-center bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Try Again
+          </button>
+        </div>
       </div>
     );
   }

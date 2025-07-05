@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuthContext } from '../../contexts/AuthContext';
 import { supabase, Assessment, Question, UserAssessment, UserAnswer } from '../../lib/supabase';
-import { Clock, CheckCircle, AlertCircle } from 'lucide-react';
+import { Clock, CheckCircle, AlertCircle, Trophy } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 export function AssessmentTaking() {
@@ -18,6 +18,7 @@ export function AssessmentTaking() {
   const [timeRemaining, setTimeRemaining] = useState(0);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (id && user) {
@@ -29,15 +30,18 @@ export function AssessmentTaking() {
     if (timeRemaining > 0) {
       const timer = setTimeout(() => setTimeRemaining(timeRemaining - 1), 1000);
       return () => clearTimeout(timer);
-    } else if (timeRemaining === 0 && userAssessment) {
+    } else if (timeRemaining === 0 && userAssessment && !submitting) {
       handleSubmitAssessment();
     }
-  }, [timeRemaining]);
+  }, [timeRemaining, userAssessment, submitting]);
 
   const initializeAssessment = async () => {
     try {
+      setLoading(true);
+      setError(null);
+
       // Fetch assessment details
-      const { data: assessmentData } = await supabase
+      const { data: assessmentData, error: assessmentError } = await supabase
         .from('assessments')
         .select(`
           *,
@@ -46,28 +50,47 @@ export function AssessmentTaking() {
         .eq('id', id)
         .single();
 
-      if (!assessmentData) {
-        toast.error('Assessment not found');
-        navigate('/assessments');
-        return;
+      if (assessmentError || !assessmentData) {
+        throw new Error('Assessment not found');
       }
 
       setAssessment(assessmentData);
 
-      // Check if user already has an in-progress assessment
-      const { data: existingAssessment } = await supabase
+      // Check if user has already completed this assessment
+      const { data: completedAssessments, error: completedError } = await supabase
+        .from('user_assessments')
+        .select('*')
+        .eq('user_id', user!.id)
+        .eq('assessment_id', id)
+        .eq('status', 'completed');
+
+      if (completedError && completedError.code !== 'PGRST116') {
+        throw completedError;
+      }
+
+      // If user has already completed this assessment, allow retake by creating new attempt
+      if (completedAssessments && completedAssessments.length > 0) {
+        toast.success('Starting a new attempt for this assessment.');
+      }
+
+      // Check for existing in-progress assessment
+      const { data: inProgressAssessment, error: inProgressError } = await supabase
         .from('user_assessments')
         .select('*')
         .eq('user_id', user!.id)
         .eq('assessment_id', id)
         .eq('status', 'in_progress')
-        .single();
+        .maybeSingle();
 
-      let currentUserAssessment = existingAssessment;
+      if (inProgressError && inProgressError.code !== 'PGRST116') {
+        throw inProgressError;
+      }
 
-      if (!existingAssessment) {
-        // Create new user assessment
-        const { data: newAssessment } = await supabase
+      let currentUserAssessment = inProgressAssessment;
+
+      // Only create new assessment if no in-progress one exists
+      if (!inProgressAssessment) {
+        const { data: newAssessment, error: createError } = await supabase
           .from('user_assessments')
           .insert({
             user_id: user!.id,
@@ -79,13 +102,17 @@ export function AssessmentTaking() {
           .select()
           .single();
 
+        if (createError) throw createError;
         currentUserAssessment = newAssessment;
+        toast.success('Assessment started! Good luck!');
+      } else {
+        toast.success('Continuing your previous assessment...');
       }
 
       setUserAssessment(currentUserAssessment);
 
       // Fetch questions for this assessment
-      const { data: questionsData } = await supabase
+      const { data: questionsData, error: questionsError } = await supabase
         .from('assessment_questions')
         .select(`
           question:questions(*)
@@ -93,32 +120,45 @@ export function AssessmentTaking() {
         .eq('assessment_id', id)
         .order('order_index');
 
+      if (questionsError) throw questionsError;
+
       const assessmentQuestions = questionsData?.map(aq => aq.question).filter(Boolean) || [];
+      
+      if (assessmentQuestions.length === 0) {
+        throw new Error('No questions found for this assessment');
+      }
+
       setQuestions(assessmentQuestions);
 
-      // Calculate time remaining
+      // Calculate time remaining based on when assessment was started
       const startTime = new Date(currentUserAssessment.started_at).getTime();
       const currentTime = new Date().getTime();
       const elapsedMinutes = Math.floor((currentTime - startTime) / (1000 * 60));
       const remainingMinutes = Math.max(0, assessmentData.duration_minutes - elapsedMinutes);
       setTimeRemaining(remainingMinutes * 60);
 
-      // Load existing answers
-      const { data: existingAnswers } = await supabase
-        .from('user_answers')
-        .select('*')
-        .eq('user_assessment_id', currentUserAssessment.id);
+      // Load existing answers if resuming
+      if (inProgressAssessment) {
+        const { data: existingAnswers, error: answersError } = await supabase
+          .from('user_answers')
+          .select('*')
+          .eq('user_assessment_id', currentUserAssessment.id);
 
-      const answersMap: Record<string, string> = {};
-      existingAnswers?.forEach(answer => {
-        answersMap[answer.question_id] = answer.user_answer || '';
-      });
-      setAnswers(answersMap);
+        if (answersError) {
+          console.error('Error loading existing answers:', answersError);
+        } else {
+          const answersMap: Record<string, string> = {};
+          existingAnswers?.forEach(answer => {
+            answersMap[answer.question_id] = answer.user_answer || '';
+          });
+          setAnswers(answersMap);
+        }
+      }
 
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error initializing assessment:', error);
-      toast.error('Failed to load assessment');
-      navigate('/assessments');
+      setError(error.message || 'Failed to load assessment');
+      toast.error(error.message || 'Failed to load assessment');
     } finally {
       setLoading(false);
     }
@@ -127,7 +167,7 @@ export function AssessmentTaking() {
   const handleAnswerChange = async (questionId: string, answer: string) => {
     setAnswers(prev => ({ ...prev, [questionId]: answer }));
 
-    // Save answer to database
+    // Save answer to database immediately
     try {
       const { error } = await supabase
         .from('user_answers')
@@ -137,14 +177,25 @@ export function AssessmentTaking() {
           user_answer: answer,
         });
 
-      if (error) throw error;
+      if (error) {
+        console.error('Error saving answer:', error);
+        toast.error('Failed to save answer. Please try again.');
+      }
     } catch (error) {
       console.error('Error saving answer:', error);
     }
   };
 
   const handleSubmitAssessment = async () => {
-    if (submitting) return;
+    if (submitting || !userAssessment) return;
+    
+    // Confirm submission
+    const confirmSubmit = window.confirm(
+      'Are you sure you want to submit your assessment? This action cannot be undone.'
+    );
+    
+    if (!confirmSubmit) return;
+
     setSubmitting(true);
 
     try {
@@ -165,7 +216,7 @@ export function AssessmentTaking() {
         await supabase
           .from('user_answers')
           .upsert({
-            user_assessment_id: userAssessment!.id,
+            user_assessment_id: userAssessment.id,
             question_id: question.id,
             user_answer: userAnswer || '',
             is_correct: isCorrect,
@@ -173,10 +224,10 @@ export function AssessmentTaking() {
           });
       }
 
-      // Update user assessment
+      // Update user assessment to completed
       const timeTaken = Math.ceil((assessment!.duration_minutes * 60 - timeRemaining) / 60);
       
-      await supabase
+      const { error: updateError } = await supabase
         .from('user_assessments')
         .update({
           status: 'completed',
@@ -185,13 +236,27 @@ export function AssessmentTaking() {
           time_taken_minutes: timeTaken,
           completed_at: new Date().toISOString(),
         })
-        .eq('id', userAssessment!.id);
+        .eq('id', userAssessment.id);
+
+      if (updateError) throw updateError;
 
       toast.success('Assessment completed successfully!');
-      navigate(`/assessments/${id}/results`);
-    } catch (error) {
+      
+      // Navigate to results page with score data
+      navigate('/assessments', { 
+        state: { 
+          completedAssessment: {
+            title: assessment!.title,
+            score: totalScore,
+            totalPoints: totalPoints,
+            percentage: totalPoints > 0 ? Math.round((totalScore / totalPoints) * 100) : 0,
+            timeTaken: timeTaken
+          }
+        }
+      });
+    } catch (error: any) {
       console.error('Error submitting assessment:', error);
-      toast.error('Failed to submit assessment');
+      toast.error('Failed to submit assessment. Please try again.');
     } finally {
       setSubmitting(false);
     }
@@ -206,18 +271,27 @@ export function AssessmentTaking() {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading assessment...</p>
+        </div>
       </div>
     );
   }
 
-  if (!assessment || !questions.length) {
+  if (error || !assessment || !questions.length) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
           <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
           <h2 className="text-xl font-semibold text-gray-900 mb-2">Assessment Not Available</h2>
-          <p className="text-gray-600">This assessment could not be loaded.</p>
+          <p className="text-gray-600 mb-4">{error || 'This assessment could not be loaded.'}</p>
+          <button
+            onClick={() => navigate('/assessments')}
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            Back to Assessments
+          </button>
         </div>
       </div>
     );
