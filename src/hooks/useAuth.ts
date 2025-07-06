@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase, Profile } from '../lib/supabase';
 
@@ -6,11 +6,19 @@ export function useAuth() {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [initialized, setInitialized] = useState(false);
+  const fetchingProfileRef = useRef(false);
+  const currentUserIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
 
     const initializeAuth = async () => {
+      // Don't re-initialize if already done
+      if (initialized) {
+        return;
+      }
+
       try {
         console.log('🔄 Initializing auth...');
         
@@ -24,17 +32,23 @@ export function useAuth() {
         
         if (session?.user) {
           console.log('👤 Fetching profile for user:', session.user.id);
+          currentUserIdRef.current = session.user.id;
           await fetchProfile(session.user.id);
         } else {
           console.log('🚫 No user session found');
           setProfile(null);
+          currentUserIdRef.current = null;
         }
+        
+        setInitialized(true);
         
       } catch (error) {
         console.error('💥 Auth initialization failed:', error);
         if (mounted) {
           setUser(null);
           setProfile(null);
+          setInitialized(true);
+          currentUserIdRef.current = null;
         }
       } finally {
         if (mounted) {
@@ -54,40 +68,68 @@ export function useAuth() {
 
         console.log('🔄 Auth state changed:', event, !!session?.user);
         
-        // Only handle actual auth events, not token refresh
-        if (event === 'SIGNED_IN' || event === 'SIGNED_OUT' || event === 'TOKEN_REFRESHED') {
+        // Only handle specific auth events that require action
+        if (event === 'SIGNED_IN') {
+          const newUserId = session?.user?.id;
           setUser(session?.user ?? null);
-        
-          if (session?.user) {
-            console.log('👤 User authenticated (event:', event, '), fetching profile...');
-            await fetchProfile(session.user.id);
-          } else {
-            console.log('🚫 User signed out or session expired');
-            setProfile(null);
+          
+          if (newUserId && newUserId !== currentUserIdRef.current) {
+            console.log('👤 New user signed in, fetching profile...');
+            currentUserIdRef.current = newUserId;
+            await fetchProfile(newUserId);
           }
-        
-          // Always mark loading as false once session is handled
-          setLoading(false);
+        } else if (event === 'SIGNED_OUT') {
+          console.log('🚫 User signed out');
+          setUser(null);
+          setProfile(null);
+          currentUserIdRef.current = null;
+          fetchingProfileRef.current = false;
         }
+        // Ignore TOKEN_REFRESHED and other events to prevent unnecessary re-renders
       }
     );
 
     return () => {
       console.log('🧹 Cleaning up auth...');
       mounted = false;
+      fetchingProfileRef.current = false;
       subscription.unsubscribe();
     };
-  }, []);
+  }, [initialized]); // Only depend on initialized to prevent re-runs
 
   const fetchProfile = async (userId: string) => {
+    // Prevent duplicate profile fetches for the same user
+    if (fetchingProfileRef.current || !userId || userId !== currentUserIdRef.current) {
+      console.log('🚫 Skipping profile fetch - already fetching or user changed');
+      return;
+    }
+
+    fetchingProfileRef.current = true;
+
     try {
       console.log('📋 Fetching profile for:', userId);
       
+      // Create AbortController for request cancellation
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => {
+        console.log('⏰ Profile fetch timeout');
+        controller.abort();
+      }, 5000); // 5 second timeout
+
       const { data, error } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', userId)
+        .abortSignal(controller.signal)
         .maybeSingle();
+
+      clearTimeout(timeoutId);
+
+      // Check if user changed during fetch
+      if (userId !== currentUserIdRef.current) {
+        console.log('🚫 User changed during profile fetch, ignoring result');
+        return;
+      }
 
       if (error && error.code !== 'PGRST116') {
         console.error('❌ Profile fetch error:', error);
@@ -96,8 +138,14 @@ export function useAuth() {
 
       console.log('✅ Profile fetched:', !!data);
       setProfile(data);
-    } catch (error) {
-      console.error('💥 Profile fetch failed:', error);
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        console.log('🚫 Profile fetch aborted');
+      } else {
+        console.error('💥 Profile fetch failed:', error);
+      }
+    } finally {
+      fetchingProfileRef.current = false;
     }
   };
 
@@ -148,6 +196,8 @@ export function useAuth() {
       
       setUser(null);
       setProfile(null);
+      currentUserIdRef.current = null;
+      fetchingProfileRef.current = false;
       console.log('✅ User signed out successfully');
     } catch (error) {
       console.error('❌ Sign out failed:', error);

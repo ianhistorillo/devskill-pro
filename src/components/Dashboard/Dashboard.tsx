@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuthContext } from '../../contexts/AuthContext';
 import { supabase, Assessment, UserAssessment, CodingChallenge } from '../../lib/supabase';
 import { StatsOverview } from './StatsOverview';
@@ -13,95 +13,122 @@ export function Dashboard() {
   const [assessments, setAssessments] = useState<Assessment[]>([]);
   const [userAssessments, setUserAssessments] = useState<UserAssessment[]>([]);
   const [challenges, setChallenges] = useState<CodingChallenge[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [dataLoaded, setDataLoaded] = useState(false);
+  const fetchingRef = useRef(false);
 
   useEffect(() => {
-    if (!authLoading && user) {
+    // Only fetch data if user is authenticated, auth is not loading, and we haven't loaded data yet
+    if (!authLoading && user && !dataLoaded && !fetchingRef.current) {
       fetchDashboardData();
     }
-  }, [authLoading, user]);
+  }, [authLoading, user, dataLoaded]);
 
   const fetchDashboardData = async () => {
-    if (!user) {
-      setLoading(false);
+    if (!user || fetchingRef.current) {
       return;
     }
+
+    // Prevent multiple simultaneous fetches
+    fetchingRef.current = true;
 
     try {
       console.log('📊 Fetching dashboard data...');
       setLoading(true);
       setError(null);
 
-      // Fetch available assessments - no timeout, simple query
-      const assessmentsPromise = supabase
-        .from('assessments')
-        .select(`
-          *,
-          category:categories(*)
-        `)
-        .eq('is_active', true)
-        .order('created_at', { ascending: false })
-        .limit(6);
+      // Create AbortController for request cancellation
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
 
-      // Fetch user assessments - no timeout, simple query
-      const userAssessmentsPromise = supabase
-        .from('user_assessments')
-        .select(`
-          *,
-          assessment:assessments(
+      try {
+        // Fetch available assessments
+        const assessmentsPromise = supabase
+          .from('assessments')
+          .select(`
             *,
             category:categories(*)
-          )
-        `)
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
-        .limit(10);
+          `)
+          .eq('is_active', true)
+          .order('created_at', { ascending: false })
+          .limit(6)
+          .abortSignal(controller.signal);
 
-      // Fetch coding challenges - no timeout, simple query
-      const challengesPromise = supabase
-        .from('coding_challenges')
-        .select(`
-          *,
-          category:categories(*)
-        `)
-        .eq('is_active', true)
-        .order('created_at', { ascending: false })
-        .limit(6);
+        // Fetch user assessments
+        const userAssessmentsPromise = supabase
+          .from('user_assessments')
+          .select(`
+            *,
+            assessment:assessments(
+              *,
+              category:categories(*)
+            )
+          `)
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false })
+          .limit(10)
+          .abortSignal(controller.signal);
 
-      // Execute all queries in parallel without timeouts
-      const [assessmentsResponse, userAssessmentsResponse, challengesResponse] = await Promise.all([
-        assessmentsPromise,
-        userAssessmentsPromise,
-        challengesPromise
-      ]);
+        // Fetch coding challenges
+        const challengesPromise = supabase
+          .from('coding_challenges')
+          .select(`
+            *,
+            category:categories(*)
+          `)
+          .eq('is_active', true)
+          .order('created_at', { ascending: false })
+          .limit(6)
+          .abortSignal(controller.signal);
 
-      // Handle responses
-      if (assessmentsResponse.error) {
-        console.error('❌ Failed to load assessments:', assessmentsResponse.error);
-        setAssessments([]);
-      } else {
-        setAssessments(assessmentsResponse.data || []);
-        console.log('✅ Assessments loaded:', assessmentsResponse.data?.length || 0);
+        // Execute all queries in parallel
+        const [assessmentsResponse, userAssessmentsResponse, challengesResponse] = await Promise.all([
+          assessmentsPromise,
+          userAssessmentsPromise,
+          challengesPromise
+        ]);
+
+        clearTimeout(timeoutId);
+
+        // Handle responses
+        if (assessmentsResponse.error) {
+          console.error('❌ Failed to load assessments:', assessmentsResponse.error);
+          setAssessments([]);
+        } else {
+          setAssessments(assessmentsResponse.data || []);
+          console.log('✅ Assessments loaded:', assessmentsResponse.data?.length || 0);
+        }
+
+        if (userAssessmentsResponse.error) {
+          console.error('❌ Failed to load user assessments:', userAssessmentsResponse.error);
+          setUserAssessments([]);
+        } else {
+          setUserAssessments(userAssessmentsResponse.data || []);
+          console.log('✅ User assessments loaded:', userAssessmentsResponse.data?.length || 0);
+        }
+
+        if (challengesResponse.error) {
+          console.error('❌ Failed to load challenges:', challengesResponse.error);
+          setChallenges([]);
+        } else {
+          setChallenges(challengesResponse.data || []);
+          console.log('✅ Challenges loaded:', challengesResponse.data?.length || 0);
+        }
+
+        setDataLoaded(true);
+        console.log('✅ Dashboard data loaded successfully');
+
+      } catch (fetchError: any) {
+        clearTimeout(timeoutId);
+        
+        if (fetchError.name === 'AbortError') {
+          console.error('💥 Dashboard data fetch timed out');
+          setError('Request timed out. Please check your connection.');
+        } else {
+          throw fetchError;
+        }
       }
-
-      if (userAssessmentsResponse.error) {
-        console.error('❌ Failed to load user assessments:', userAssessmentsResponse.error);
-        setUserAssessments([]);
-      } else {
-        setUserAssessments(userAssessmentsResponse.data || []);
-        console.log('✅ User assessments loaded:', userAssessmentsResponse.data?.length || 0);
-      }
-
-      if (challengesResponse.error) {
-        console.error('❌ Failed to load challenges:', challengesResponse.error);
-        setChallenges([]);
-      } else {
-        setChallenges(challengesResponse.data || []);
-        console.log('✅ Challenges loaded:', challengesResponse.data?.length || 0);
-      }
-
-      console.log('✅ Dashboard data loaded successfully');
 
     } catch (error: any) {
       console.error('💥 Dashboard data fetch failed:', error);
@@ -109,15 +136,18 @@ export function Dashboard() {
       toast.error('Failed to load dashboard data');
     } finally {
       setLoading(false);
+      fetchingRef.current = false;
     }
   };
 
   const handleRetry = () => {
     console.log('🔄 Retrying dashboard data fetch...');
+    setDataLoaded(false);
     fetchDashboardData();
   };
 
-  if (authLoading || loading) {
+  // Show loading only if auth is loading
+  if (authLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
@@ -128,6 +158,7 @@ export function Dashboard() {
     );
   }
 
+  // Show error state
   if (error) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -147,6 +178,7 @@ export function Dashboard() {
     );
   }
 
+  // Show dashboard content (even if data is still loading)
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <div className="mb-8">
@@ -158,23 +190,32 @@ export function Dashboard() {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-2 space-y-8">
-          <StatsOverview 
-            userAssessments={userAssessments}
-            challenges={challenges}
-          />
-          <ProgressChart userAssessments={userAssessments} />
-          <RecentActivity userAssessments={userAssessments} />
+      {loading && !dataLoaded ? (
+        <div className="flex items-center justify-center py-12">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
+            <p className="text-gray-600">Loading dashboard data...</p>
+          </div>
         </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          <div className="lg:col-span-2 space-y-8">
+            <StatsOverview 
+              userAssessments={userAssessments}
+              challenges={challenges}
+            />
+            <ProgressChart userAssessments={userAssessments} />
+            <RecentActivity userAssessments={userAssessments} />
+          </div>
 
-        <div className="space-y-8">
-          <QuickActions 
-            assessments={assessments}
-            challenges={challenges}
-          />
+          <div className="space-y-8">
+            <QuickActions 
+              assessments={assessments}
+              challenges={challenges}
+            />
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
