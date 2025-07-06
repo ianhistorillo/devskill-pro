@@ -1,22 +1,46 @@
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { supabase, CodingChallenge, Category } from '../../lib/supabase';
-import { Code, Clock, Trophy, Filter, Search, Tag } from 'lucide-react';
+import { Code, Clock, Trophy, Filter, Search, Tag, CheckCircle } from 'lucide-react';
+import toast from 'react-hot-toast';
 
 export function ChallengesList() {
+  const location = useLocation();
   const [challenges, setChallenges] = useState<CodingChallenge[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [selectedDifficulty, setSelectedDifficulty] = useState<string>('all');
+
+  // Check if we have completion data from navigation state
+  const completedChallenge = location.state?.completedChallenge;
 
   useEffect(() => {
     fetchData();
   }, []);
 
+  useEffect(() => {
+    // Show completion message if we have completion data
+    if (completedChallenge) {
+      const message = completedChallenge.status === 'passed' 
+        ? `Challenge completed successfully! Earned ${completedChallenge.score} points`
+        : 'Challenge submitted. Keep practicing!';
+      
+      toast.success(message, { duration: 5000 });
+      
+      // Clear the state to prevent showing the message again
+      window.history.replaceState({}, document.title);
+    }
+  }, [completedChallenge]);
+
   const fetchData = async () => {
     try {
+      setLoading(true);
+      setError(null);
+
+      // Simple parallel queries without timeouts
       const [challengesResponse, categoriesResponse] = await Promise.all([
         supabase
           .from('coding_challenges')
@@ -32,10 +56,26 @@ export function ChallengesList() {
           .order('name')
       ]);
 
-      setChallenges(challengesResponse.data || []);
-      setCategories(categoriesResponse.data || []);
-    } catch (error) {
+      if (challengesResponse.error) {
+        console.error('❌ Failed to load challenges:', challengesResponse.error);
+        setChallenges([]);
+      } else {
+        setChallenges(challengesResponse.data || []);
+        console.log('✅ Challenges loaded:', challengesResponse.data?.length || 0);
+      }
+
+      if (categoriesResponse.error) {
+        console.error('❌ Failed to load categories:', categoriesResponse.error);
+        setCategories([]);
+      } else {
+        setCategories(categoriesResponse.data || []);
+        console.log('✅ Categories loaded:', categoriesResponse.data?.length || 0);
+      }
+
+    } catch (error: any) {
       console.error('Error fetching data:', error);
+      setError('Failed to load challenges');
+      toast.error('Failed to load challenges');
     } finally {
       setLoading(false);
     }
@@ -62,7 +102,27 @@ export function ChallengesList() {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading challenges...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <h2 className="text-xl font-semibold text-gray-900 mb-2">Failed to Load Challenges</h2>
+          <p className="text-gray-600 mb-4">{error}</p>
+          <button
+            onClick={fetchData}
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            Try Again
+          </button>
+        </div>
       </div>
     );
   }
@@ -72,6 +132,23 @@ export function ChallengesList() {
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-gray-900 mb-2">Coding Challenges</h1>
         <p className="text-gray-600">Practice your programming skills with real-world coding problems</p>
+        
+        {/* Show completion message */}
+        {completedChallenge && (
+          <div className="mt-4 bg-green-50 border border-green-200 rounded-lg p-4">
+            <div className="flex items-center">
+              <CheckCircle className="h-5 w-5 text-green-500 mr-2" />
+              <div>
+                <h3 className="font-medium text-green-800">Challenge Completed!</h3>
+                <p className="text-sm text-green-700">
+                  {completedChallenge.title} - Status: {completedChallenge.status}
+                  {completedChallenge.score > 0 && ` - Earned ${completedChallenge.score} points`}
+                  {completedChallenge.language && ` (${completedChallenge.language})`}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Filters */}

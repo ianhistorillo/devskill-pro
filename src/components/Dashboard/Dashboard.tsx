@@ -9,7 +9,7 @@ import { AlertCircle, RefreshCw } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 export function Dashboard() {
-  const { user, profile } = useAuthContext();
+  const { user, profile, loading: authLoading } = useAuthContext();
   const [assessments, setAssessments] = useState<Assessment[]>([]);
   const [userAssessments, setUserAssessments] = useState<UserAssessment[]>([]);
   const [challenges, setChallenges] = useState<CodingChallenge[]>([]);
@@ -17,10 +17,10 @@ export function Dashboard() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (user) {
+    if (!authLoading && user) {
       fetchDashboardData();
     }
-  }, [user]);
+  }, [authLoading, user]);
 
   const fetchDashboardData = async () => {
     if (!user) {
@@ -117,7 +117,7 @@ export function Dashboard() {
     fetchDashboardData();
   };
 
-  if (loading) {
+  if (authLoading || loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">

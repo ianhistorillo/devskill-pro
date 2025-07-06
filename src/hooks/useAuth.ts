@@ -9,13 +9,12 @@ export function useAuth() {
 
   useEffect(() => {
     let mounted = true;
-    let inactivityTimer: NodeJS.Timeout | null = null;
 
     const initializeAuth = async () => {
       try {
         console.log('🔄 Initializing auth...');
         
-        // Simple session check - no timeout
+        // Get initial session
         const { data: { session } } = await supabase.auth.getSession();
         
         if (!mounted) return;
@@ -26,7 +25,6 @@ export function useAuth() {
         if (session?.user) {
           console.log('👤 Fetching profile for user:', session.user.id);
           await fetchProfile(session.user.id);
-          startInactivityTimer();
         } else {
           console.log('🚫 No user session found');
           setProfile(null);
@@ -46,73 +44,37 @@ export function useAuth() {
       }
     };
 
-    const startInactivityTimer = () => {
-      // Clear any existing timer
-      if (inactivityTimer) {
-        clearTimeout(inactivityTimer);
-      }
-      
-      // Set 30-minute inactivity timer
-      inactivityTimer = setTimeout(async () => {
-        console.log('⏰ 30 minutes of inactivity - signing out');
-        await signOut();
-      }, 30 * 60 * 1000); // 30 minutes
-    };
-
-    const resetInactivityTimer = () => {
-      if (user) {
-        startInactivityTimer();
-      }
-    };
-
-    // Reset timer on user activity
-    const activityEvents = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart', 'click'];
-    activityEvents.forEach(event => {
-      document.addEventListener(event, resetInactivityTimer, true);
-    });
-
     // Initialize auth
     initializeAuth();
 
-    // Listen for auth changes - simplified
+    // Listen for auth changes - only for actual sign in/out events
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         if (!mounted) return;
 
         console.log('🔄 Auth state changed:', event, !!session?.user);
         
-        setUser(session?.user ?? null);
+        // Only handle actual auth events, not token refresh
+        if (event === 'SIGNED_IN' || event === 'SIGNED_OUT' || event === 'TOKEN_REFRESHED') {
+          setUser(session?.user ?? null);
         
-        if (session?.user) {
-          console.log('👤 User authenticated, fetching profile...');
-          await fetchProfile(session.user.id);
-          startInactivityTimer();
-        } else {
-          console.log('🚫 User signed out');
-          setProfile(null);
-          if (inactivityTimer) {
-            clearTimeout(inactivityTimer);
-            inactivityTimer = null;
+          if (session?.user) {
+            console.log('👤 User authenticated (event:', event, '), fetching profile...');
+            await fetchProfile(session.user.id);
+          } else {
+            console.log('🚫 User signed out or session expired');
+            setProfile(null);
           }
-        }
         
-        setLoading(false);
+          // Always mark loading as false once session is handled
+          setLoading(false);
+        }
       }
     );
 
     return () => {
       console.log('🧹 Cleaning up auth...');
       mounted = false;
-      
-      if (inactivityTimer) {
-        clearTimeout(inactivityTimer);
-      }
-      
-      // Remove activity listeners
-      activityEvents.forEach(event => {
-        document.removeEventListener(event, resetInactivityTimer, true);
-      });
-      
       subscription.unsubscribe();
     };
   }, []);
@@ -129,7 +91,6 @@ export function useAuth() {
 
       if (error && error.code !== 'PGRST116') {
         console.error('❌ Profile fetch error:', error);
-        // Don't fail - just continue without profile
         return;
       }
 
@@ -137,7 +98,6 @@ export function useAuth() {
       setProfile(data);
     } catch (error) {
       console.error('💥 Profile fetch failed:', error);
-      // Don't fail - just continue without profile
     }
   };
 

@@ -1,22 +1,45 @@
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { supabase, Assessment, Category } from '../../lib/supabase';
-import { Clock, Users, BookOpen, Filter, Search } from 'lucide-react';
+import { Clock, Users, BookOpen, Filter, Search, Trophy, CheckCircle } from 'lucide-react';
+import toast from 'react-hot-toast';
 
 export function AssessmentsList() {
+  const location = useLocation();
   const [assessments, setAssessments] = useState<Assessment[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [selectedDifficulty, setSelectedDifficulty] = useState<string>('all');
+
+  // Check if we have completion data from navigation state
+  const completedAssessment = location.state?.completedAssessment;
 
   useEffect(() => {
     fetchData();
   }, []);
 
+  useEffect(() => {
+    // Show completion message if we have completion data
+    if (completedAssessment) {
+      toast.success(
+        `Assessment completed! Score: ${completedAssessment.percentage}% (${completedAssessment.score}/${completedAssessment.totalPoints} points)`,
+        { duration: 5000 }
+      );
+      
+      // Clear the state to prevent showing the message again
+      window.history.replaceState({}, document.title);
+    }
+  }, [completedAssessment]);
+
   const fetchData = async () => {
     try {
+      setLoading(true);
+      setError(null);
+
+      // Simple parallel queries without timeouts
       const [assessmentsResponse, categoriesResponse] = await Promise.all([
         supabase
           .from('assessments')
@@ -32,10 +55,26 @@ export function AssessmentsList() {
           .order('name')
       ]);
 
-      setAssessments(assessmentsResponse.data || []);
-      setCategories(categoriesResponse.data || []);
-    } catch (error) {
+      if (assessmentsResponse.error) {
+        console.error('❌ Failed to load assessments:', assessmentsResponse.error);
+        setAssessments([]);
+      } else {
+        setAssessments(assessmentsResponse.data || []);
+        console.log('✅ Assessments loaded:', assessmentsResponse.data?.length || 0);
+      }
+
+      if (categoriesResponse.error) {
+        console.error('❌ Failed to load categories:', categoriesResponse.error);
+        setCategories([]);
+      } else {
+        setCategories(categoriesResponse.data || []);
+        console.log('✅ Categories loaded:', categoriesResponse.data?.length || 0);
+      }
+
+    } catch (error: any) {
       console.error('Error fetching data:', error);
+      setError('Failed to load assessments');
+      toast.error('Failed to load assessments');
     } finally {
       setLoading(false);
     }
@@ -62,7 +101,27 @@ export function AssessmentsList() {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading assessments...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <h2 className="text-xl font-semibold text-gray-900 mb-2">Failed to Load Assessments</h2>
+          <p className="text-gray-600 mb-4">{error}</p>
+          <button
+            onClick={fetchData}
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            Try Again
+          </button>
+        </div>
       </div>
     );
   }
@@ -72,6 +131,23 @@ export function AssessmentsList() {
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-gray-900 mb-2">Skill Assessments</h1>
         <p className="text-gray-600">Test your knowledge with comprehensive assessments across various technologies</p>
+        
+        {/* Show completion message */}
+        {completedAssessment && (
+          <div className="mt-4 bg-green-50 border border-green-200 rounded-lg p-4">
+            <div className="flex items-center">
+              <CheckCircle className="h-5 w-5 text-green-500 mr-2" />
+              <div>
+                <h3 className="font-medium text-green-800">Assessment Completed!</h3>
+                <p className="text-sm text-green-700">
+                  {completedAssessment.title} - Score: {completedAssessment.percentage}% 
+                  ({completedAssessment.score}/{completedAssessment.totalPoints} points)
+                  {completedAssessment.timeTaken && ` in ${completedAssessment.timeTaken} minutes`}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Filters */}
