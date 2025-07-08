@@ -30,10 +30,15 @@ export function AssessmentTaking() {
     if (timeRemaining > 0) {
       const timer = setTimeout(() => setTimeRemaining(timeRemaining - 1), 1000);
       return () => clearTimeout(timer);
-    } else if (timeRemaining === 0 && userAssessment && !submitting) {
-      handleSubmitAssessment();
+    } else if (timeRemaining === 0 && userAssessment && !submitting && questions.length > 0) {
+      // Only auto-submit if user has actually started the assessment
+      const hasAnswers = Object.keys(answers).length > 0;
+      if (hasAnswers) {
+        toast.error('Time limit reached! Submitting your assessment...');
+        handleSubmitAssessment();
+      }
     }
-  }, [timeRemaining, userAssessment, submitting]);
+  }, [timeRemaining, userAssessment, submitting, questions.length, answers]);
 
   const initializeAssessment = async () => {
     try {
@@ -189,9 +194,17 @@ export function AssessmentTaking() {
   const handleSubmitAssessment = async () => {
     if (submitting || !userAssessment) return;
     
+    // Check if user has answered any questions
+    const answeredQuestions = Object.keys(answers).filter(questionId => answers[questionId]?.trim());
+    
+    if (answeredQuestions.length === 0) {
+      toast.error('Please answer at least one question before submitting.');
+      return;
+    }
+    
     // Confirm submission
     const confirmSubmit = window.confirm(
-      'Are you sure you want to submit your assessment? This action cannot be undone.'
+      `Are you sure you want to submit your assessment? You have answered ${answeredQuestions.length} out of ${questions.length} questions. This action cannot be undone.`
     );
     
     if (!confirmSubmit) return;
@@ -243,15 +256,10 @@ export function AssessmentTaking() {
       toast.success('Assessment completed successfully!');
       
       // Navigate to results page with score data
-      navigate('/assessments', { 
+      navigate(`/assessments/${id}/results`, { 
         state: { 
-          completedAssessment: {
-            title: assessment!.title,
-            score: totalScore,
-            totalPoints: totalPoints,
-            percentage: totalPoints > 0 ? Math.round((totalScore / totalPoints) * 100) : 0,
-            timeTaken: timeTaken
-          }
+          userAssessmentId: userAssessment.id,
+          fromSubmission: true
         }
       });
     } catch (error: any) {

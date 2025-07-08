@@ -24,10 +24,7 @@ export function AssessmentsList() {
   useEffect(() => {
     // Show completion message if we have completion data
     if (completedAssessment) {
-      toast.success(
-        `Assessment completed! Score: ${completedAssessment.percentage}% (${completedAssessment.score}/${completedAssessment.totalPoints} points)`,
-        { duration: 5000 }
-      );
+      // Remove the completion message from here since we now have a dedicated results page
       
       // Clear the state to prevent showing the message again
       window.history.replaceState({}, document.title);
@@ -132,22 +129,7 @@ export function AssessmentsList() {
         <h1 className="text-3xl font-bold text-gray-900 mb-2">Skill Assessments</h1>
         <p className="text-gray-600">Test your knowledge with comprehensive assessments across various technologies</p>
         
-        {/* Show completion message */}
-        {completedAssessment && (
-          <div className="mt-4 bg-green-50 border border-green-200 rounded-lg p-4">
-            <div className="flex items-center">
-              <CheckCircle className="h-5 w-5 text-green-500 mr-2" />
-              <div>
-                <h3 className="font-medium text-green-800">Assessment Completed!</h3>
-                <p className="text-sm text-green-700">
-                  {completedAssessment.title} - Score: {completedAssessment.percentage}% 
-                  ({completedAssessment.score}/{completedAssessment.totalPoints} points)
-                  {completedAssessment.timeTaken && ` in ${completedAssessment.timeTaken} minutes`}
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
+        {/* Completion message removed - now handled by dedicated results page */}
       </div>
 
       {/* Filters */}
