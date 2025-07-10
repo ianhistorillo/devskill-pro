@@ -278,7 +278,7 @@ export function AssessmentResults() {
           <div className="space-y-6">
             {questions.map((question, index) => {
               const userAnswer = userAnswers.find(ua => ua.question_id === question.id);
-              const isCorrect = userAnswer?.is_correct || false;
+              const isCorrect = userAnswer?.is_correct === true;
               const userResponse = userAnswer?.user_answer || '';
 
               return (
@@ -299,7 +299,7 @@ export function AssessmentResults() {
                         <span className={`text-sm font-medium ${
                           isCorrect ? 'text-green-600' : 'text-red-600'
                         }`}>
-                          {isCorrect ? 'Correct' : 'Incorrect'}
+                          {isCorrect ? 'Correct' : (userResponse ? 'Incorrect' : 'Not Answered')}
                         </span>
                       </div>
                       <h4 className="text-lg font-medium text-gray-900 mb-4">

@@ -255,8 +255,8 @@ export function AssessmentTaking() {
 
       toast.success('Assessment completed successfully!');
       
-      // Navigate to results page with score data
-      navigate(`/assessments/${id}/results`, { 
+      // Navigate to results page with the user assessment data
+      navigate(`/assessments/${assessment.id}/results`, { 
         state: { 
           userAssessmentId: userAssessment.id,
           fromSubmission: true
