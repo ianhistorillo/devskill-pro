@@ -280,6 +280,7 @@ export function AssessmentResults() {
               const userAnswer = userAnswers.find(ua => ua.question_id === question.id);
               const isCorrect = userAnswer?.is_correct === true;
               const userResponse = userAnswer?.user_answer || '';
+              const pointsEarned = userAnswer?.points_earned || 0;
 
               return (
                 <div key={question.id} className={`border-2 rounded-lg p-6 ${
@@ -299,7 +300,7 @@ export function AssessmentResults() {
                         <span className={`text-sm font-medium ${
                           isCorrect ? 'text-green-600' : 'text-red-600'
                         }`}>
-                          {isCorrect ? 'Correct' : (userResponse ? 'Incorrect' : 'Not Answered')}
+                          {isCorrect ? 'Correct' : (userResponse.trim() ? 'Incorrect' : 'Not Answered')}
                         </span>
                       </div>
                       <h4 className="text-lg font-medium text-gray-900 mb-4">
@@ -309,7 +310,7 @@ export function AssessmentResults() {
                     <div className="text-right">
                       <div className="text-sm text-gray-600">Points</div>
                       <div className="font-bold text-gray-900">
-                        {userAnswer?.points_earned || 0}/{question.points}
+                        {pointsEarned}/{question.points}
                       </div>
                     </div>
                   </div>
@@ -318,7 +319,7 @@ export function AssessmentResults() {
                   {question.options && (
                     <div className="space-y-2 mb-4">
                       {question.options.map((option, optionIndex) => {
-                        const isUserAnswer = userResponse === option;
+                        const isUserAnswer = userResponse.trim() === option.trim();
                         const isCorrectAnswer = question.correct_answer === option;
                         
                         let optionClass = 'p-3 border rounded-lg ';

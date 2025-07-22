@@ -61,23 +61,6 @@ export function AssessmentTaking() {
 
       setAssessment(assessmentData);
 
-      // Check if user has already completed this assessment
-      const { data: completedAssessments, error: completedError } = await supabase
-        .from('user_assessments')
-        .select('*')
-        .eq('user_id', user!.id)
-        .eq('assessment_id', id)
-        .eq('status', 'completed');
-
-      if (completedError && completedError.code !== 'PGRST116') {
-        throw completedError;
-      }
-
-      // If user has already completed this assessment, allow retake by creating new attempt
-      if (completedAssessments && completedAssessments.length > 0) {
-        toast.success('Starting a new attempt for this assessment.');
-      }
-
       // Check for existing in-progress assessment
       const { data: inProgressAssessment, error: inProgressError } = await supabase
         .from('user_assessments')
@@ -93,8 +76,22 @@ export function AssessmentTaking() {
 
       let currentUserAssessment = inProgressAssessment;
 
-      // Only create new assessment if no in-progress one exists
+      // Create new assessment if no in-progress one exists OR if user wants to retake
       if (!inProgressAssessment) {
+        // Check if this is a retake (user has completed assessments before)
+        const { data: completedAssessments, error: completedError } = await supabase
+          .from('user_assessments')
+          .select('*')
+          .eq('user_id', user!.id)
+          .eq('assessment_id', id)
+          .eq('status', 'completed');
+
+        if (completedError && completedError.code !== 'PGRST116') {
+          throw completedError;
+        }
+
+        const isRetake = completedAssessments && completedAssessments.length > 0;
+
         const { data: newAssessment, error: createError } = await supabase
           .from('user_assessments')
           .insert({
@@ -109,7 +106,12 @@ export function AssessmentTaking() {
 
         if (createError) throw createError;
         currentUserAssessment = newAssessment;
-        toast.success('Assessment started! Good luck!');
+        
+        if (isRetake) {
+          toast.success('Starting a fresh attempt for this assessment. Good luck!');
+        } else {
+          toast.success('Assessment started! Good luck!');
+        }
       } else {
         toast.success('Continuing your previous assessment...');
       }
@@ -135,12 +137,18 @@ export function AssessmentTaking() {
 
       setQuestions(assessmentQuestions);
 
-      // Calculate time remaining based on when assessment was started
-      const startTime = new Date(currentUserAssessment.started_at).getTime();
-      const currentTime = new Date().getTime();
-      const elapsedMinutes = Math.floor((currentTime - startTime) / (1000 * 60));
-      const remainingMinutes = Math.max(0, assessmentData.duration_minutes - elapsedMinutes);
-      setTimeRemaining(remainingMinutes * 60);
+      // Calculate time remaining - for fresh assessments, use full duration
+      if (inProgressAssessment) {
+        // Continuing existing assessment - calculate remaining time
+        const startTime = new Date(currentUserAssessment.started_at).getTime();
+        const currentTime = new Date().getTime();
+        const elapsedMinutes = Math.floor((currentTime - startTime) / (1000 * 60));
+        const remainingMinutes = Math.max(0, assessmentData.duration_minutes - elapsedMinutes);
+        setTimeRemaining(remainingMinutes * 60);
+      } else {
+        // Fresh assessment - use full duration
+        setTimeRemaining(assessmentData.duration_minutes * 60);
+      }
 
       // Load existing answers if resuming
       if (inProgressAssessment) {
@@ -158,6 +166,9 @@ export function AssessmentTaking() {
           });
           setAnswers(answersMap);
         }
+      } else {
+        // Fresh assessment - clear any existing answers
+        setAnswers({});
       }
 
     } catch (error: any) {
