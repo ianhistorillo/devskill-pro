@@ -230,7 +230,7 @@ export function AssessmentTaking() {
       for (const question of questions) {
         totalPoints += question.points;
         const userAnswer = answers[question.id];
-        const isCorrect = userAnswer === question.correct_answer;
+        const isCorrect = userAnswer?.trim() === question.correct_answer?.trim();
         
         if (isCorrect) {
           totalScore += question.points;

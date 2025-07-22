@@ -278,13 +278,13 @@ export function AssessmentResults() {
           <div className="space-y-6">
             {questions.map((question, index) => {
               const userAnswer = userAnswers.find(ua => ua.question_id === question.id);
-              const isCorrect = userAnswer?.is_correct === true;
+              const isCorrect = userAnswer?.is_correct;
               const userResponse = userAnswer?.user_answer || '';
               const pointsEarned = userAnswer?.points_earned || 0;
 
               return (
                 <div key={question.id} className={`border-2 rounded-lg p-6 ${
-                  isCorrect ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'
+                  isCorrect ? 'border-green-300 bg-green-100' : 'border-red-300 bg-red-100'
                 }`}>
                   <div className="flex items-start justify-between mb-4">
                     <div className="flex-1">
@@ -300,7 +300,7 @@ export function AssessmentResults() {
                         <span className={`text-sm font-medium ${
                           isCorrect ? 'text-green-600' : 'text-red-600'
                         }`}>
-                          {isCorrect ? 'Correct' : (userResponse.trim() ? 'Incorrect' : 'Not Answered')}
+                          {isCorrect ? 'Correct' : (userResponse?.trim() ? 'Incorrect' : 'Not Answered')}
                         </span>
                       </div>
                       <h4 className="text-lg font-medium text-gray-900 mb-4">
@@ -319,14 +319,14 @@ export function AssessmentResults() {
                   {question.options && (
                     <div className="space-y-2 mb-4">
                       {question.options.map((option, optionIndex) => {
-                        const isUserAnswer = userResponse.trim() === option.trim();
-                        const isCorrectAnswer = question.correct_answer === option;
+                        const isUserAnswer = userResponse?.trim() === option?.trim();
+                        const isCorrectAnswer = question.correct_answer?.trim() === option?.trim();
                         
                         let optionClass = 'p-3 border rounded-lg ';
                         if (isCorrectAnswer) {
-                          optionClass += 'border-green-300 bg-green-100 text-green-800';
+                          optionClass += 'border-green-400 bg-green-200 text-green-900 font-medium';
                         } else if (isUserAnswer && !isCorrectAnswer) {
-                          optionClass += 'border-red-300 bg-red-100 text-red-800';
+                          optionClass += 'border-red-400 bg-red-200 text-red-900 font-medium';
                         } else {
                           optionClass += 'border-gray-200 bg-gray-50 text-gray-700';
                         }
