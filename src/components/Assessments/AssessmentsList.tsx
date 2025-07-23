@@ -132,6 +132,8 @@ export function AssessmentsList() {
         {/* Completion message removed - now handled by dedicated results page */}
       </div>
 
+      {/* Retake Button for Completed Assessments */}
+
       {/* Filters */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-8">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">

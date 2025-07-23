@@ -8,7 +8,7 @@ import { LoginForm } from './components/Auth/LoginForm';
 import { RegisterForm } from './components/Auth/RegisterForm';
 import { Dashboard } from './components/Dashboard/Dashboard';
 import { AssessmentsList } from './components/Assessments/AssessmentsList';
-import { AssessmentTaking } from './components/Assessments/AssessmentTaking';
+import AssessmentTaking from './components/Assessments/AssessmentTaking';
 import { AssessmentResults } from './components/Assessments/AssessmentsResults';
 import { ChallengesList } from './components/Challenges/ChallengesList';
 import { ChallengeSolving } from './components/Challenges/ChallengeSolving';

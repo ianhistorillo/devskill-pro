@@ -1,281 +1,178 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useAuthContext } from '../../contexts/AuthContext';
-import { supabase, Assessment, Question, UserAssessment, UserAnswer } from '../../lib/supabase';
-import { Clock, CheckCircle, AlertCircle, Trophy } from 'lucide-react';
-import toast from 'react-hot-toast';
+import { Clock, CheckCircle, XCircle, ArrowRight } from 'lucide-react';
+import { supabase } from '../../lib/supabase';
+import { useAuth } from '../../hooks/useAuth';
+import { toast } from 'react-hot-toast';
 
-export function AssessmentTaking() {
+interface Question {
+  id: string;
+  question_text: string;
+  question_type: string;
+  options: string[];
+  correct_answer: string;
+  points: number;
+}
+
+interface Assessment {
+  id: string;
+  title: string;
+  description: string;
+  duration_minutes: number;
+  total_questions: number;
+}
+
+export default function AssessmentTaking() {
   const { id } = useParams<{ id: string }>();
-  const { user } = useAuthContext();
   const navigate = useNavigate();
-  
+  const { user } = useAuth();
   const [assessment, setAssessment] = useState<Assessment | null>(null);
   const [questions, setQuestions] = useState<Question[]>([]);
-  const [userAssessment, setUserAssessment] = useState<UserAssessment | null>(null);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [answers, setAnswers] = useState<Record<string, string>>({});
-  const [timeRemaining, setTimeRemaining] = useState(0);
+  const [timeLeft, setTimeLeft] = useState(0);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (id && user) {
-      initializeAssessment();
+      fetchAssessmentData();
     }
   }, [id, user]);
 
   useEffect(() => {
-    if (timeRemaining > 0) {
-      const timer = setTimeout(() => setTimeRemaining(timeRemaining - 1), 1000);
+    if (timeLeft > 0) {
+      const timer = setTimeout(() => setTimeLeft(timeLeft - 1), 1000);
       return () => clearTimeout(timer);
-    } else if (timeRemaining === 0 && userAssessment && !submitting && questions.length > 0) {
-      // Only auto-submit if user has actually started the assessment
-      const hasAnswers = Object.keys(answers).length > 0;
-      if (hasAnswers) {
-        toast.error('Time limit reached! Submitting your assessment...');
-        handleSubmitAssessment();
-      }
+    } else if (timeLeft === 0 && assessment) {
+      handleSubmit();
     }
-  }, [timeRemaining, userAssessment, submitting, questions.length, answers]);
+  }, [timeLeft, assessment]);
 
-  const initializeAssessment = async () => {
+  const fetchAssessmentData = async () => {
     try {
-      setLoading(true);
-      setError(null);
-
       // Fetch assessment details
       const { data: assessmentData, error: assessmentError } = await supabase
         .from('assessments')
-        .select(`
-          *,
-          category:categories(*)
-        `)
+        .select('*')
         .eq('id', id)
         .single();
 
-      if (assessmentError || !assessmentData) {
-        throw new Error('Assessment not found');
-      }
+      if (assessmentError) throw assessmentError;
 
       setAssessment(assessmentData);
-
-      // Check for existing in-progress assessment
-      const { data: inProgressAssessment, error: inProgressError } = await supabase
-        .from('user_assessments')
-        .select('*')
-        .eq('user_id', user!.id)
-        .eq('assessment_id', id)
-        .eq('status', 'in_progress')
-        .maybeSingle();
-
-      if (inProgressError && inProgressError.code !== 'PGRST116') {
-        throw inProgressError;
-      }
-
-      let currentUserAssessment = inProgressAssessment;
-
-      // Create new assessment if no in-progress one exists OR if user wants to retake
-      if (!inProgressAssessment) {
-        // Check if this is a retake (user has completed assessments before)
-        const { data: completedAssessments, error: completedError } = await supabase
-          .from('user_assessments')
-          .select('*')
-          .eq('user_id', user!.id)
-          .eq('assessment_id', id)
-          .eq('status', 'completed');
-
-        if (completedError && completedError.code !== 'PGRST116') {
-          throw completedError;
-        }
-
-        const isRetake = completedAssessments && completedAssessments.length > 0;
-
-        const { data: newAssessment, error: createError } = await supabase
-          .from('user_assessments')
-          .insert({
-            user_id: user!.id,
-            assessment_id: id,
-            status: 'in_progress',
-            score: 0,
-            total_points: 0,
-          })
-          .select()
-          .single();
-
-        if (createError) throw createError;
-        currentUserAssessment = newAssessment;
-        
-        if (isRetake) {
-          toast.success('Starting a fresh attempt for this assessment. Good luck!');
-        } else {
-          toast.success('Assessment started! Good luck!');
-        }
-      } else {
-        toast.success('Continuing your previous assessment...');
-      }
-
-      setUserAssessment(currentUserAssessment);
+      setTimeLeft(assessmentData.duration_minutes * 60);
 
       // Fetch questions for this assessment
       const { data: questionsData, error: questionsError } = await supabase
         .from('assessment_questions')
         .select(`
-          question:questions(*)
+          questions (
+            id,
+            question_text,
+            question_type,
+            options,
+            correct_answer,
+            points
+          )
         `)
         .eq('assessment_id', id)
         .order('order_index');
 
       if (questionsError) throw questionsError;
 
-      const assessmentQuestions = questionsData?.map(aq => aq.question).filter(Boolean) || [];
-      
-      if (assessmentQuestions.length === 0) {
-        throw new Error('No questions found for this assessment');
-      }
-
-      setQuestions(assessmentQuestions);
-
-      // Calculate time remaining - for fresh assessments, use full duration
-      if (inProgressAssessment) {
-        // Continuing existing assessment - calculate remaining time
-        const startTime = new Date(currentUserAssessment.started_at).getTime();
-        const currentTime = new Date().getTime();
-        const elapsedMinutes = Math.floor((currentTime - startTime) / (1000 * 60));
-        const remainingMinutes = Math.max(0, assessmentData.duration_minutes - elapsedMinutes);
-        setTimeRemaining(remainingMinutes * 60);
-      } else {
-        // Fresh assessment - use full duration
-        setTimeRemaining(assessmentData.duration_minutes * 60);
-      }
-
-      // Load existing answers if resuming
-      if (inProgressAssessment) {
-        const { data: existingAnswers, error: answersError } = await supabase
-          .from('user_answers')
-          .select('*')
-          .eq('user_assessment_id', currentUserAssessment.id);
-
-        if (answersError) {
-          console.error('Error loading existing answers:', answersError);
-        } else {
-          const answersMap: Record<string, string> = {};
-          existingAnswers?.forEach(answer => {
-            answersMap[answer.question_id] = answer.user_answer || '';
-          });
-          setAnswers(answersMap);
-        }
-      } else {
-        // Fresh assessment - clear any existing answers
-        setAnswers({});
-      }
-
-    } catch (error: any) {
-      console.error('Error initializing assessment:', error);
-      setError(error.message || 'Failed to load assessment');
-      toast.error(error.message || 'Failed to load assessment');
+      const formattedQuestions = questionsData.map((item: any) => item.questions);
+      setQuestions(formattedQuestions);
+    } catch (error) {
+      console.error('Error fetching assessment:', error);
+      toast.error('Failed to load assessment');
+      navigate('/assessments');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleAnswerChange = async (questionId: string, answer: string) => {
-    setAnswers(prev => ({ ...prev, [questionId]: answer }));
+  const handleAnswerSelect = (answer: string) => {
+    setAnswers(prev => ({
+      ...prev,
+      [questions[currentQuestionIndex].id]: answer
+    }));
+  };
 
-    // Save answer to database immediately
-    try {
-      const { error } = await supabase
-        .from('user_answers')
-        .upsert({
-          user_assessment_id: userAssessment!.id,
-          question_id: questionId,
-          user_answer: answer,
-        });
-
-      if (error) {
-        console.error('Error saving answer:', error);
-        toast.error('Failed to save answer. Please try again.');
-      }
-    } catch (error) {
-      console.error('Error saving answer:', error);
+  const handleNext = () => {
+    if (currentQuestionIndex < questions.length - 1) {
+      setCurrentQuestionIndex(currentQuestionIndex + 1);
     }
   };
 
-  const handleSubmitAssessment = async () => {
-    if (submitting || !userAssessment) return;
-    
-    // Check if user has answered any questions
-    const answeredQuestions = Object.keys(answers).filter(questionId => answers[questionId]?.trim());
-    
-    if (answeredQuestions.length === 0) {
-      toast.error('Please answer at least one question before submitting.');
-      return;
+  const handlePrevious = () => {
+    if (currentQuestionIndex > 0) {
+      setCurrentQuestionIndex(currentQuestionIndex - 1);
     }
-    
-    // Confirm submission
-    const confirmSubmit = window.confirm(
-      `Are you sure you want to submit your assessment? You have answered ${answeredQuestions.length} out of ${questions.length} questions. This action cannot be undone.`
-    );
-    
-    if (!confirmSubmit) return;
+  };
+
+  const handleSubmit = async () => {
+    if (!user || !assessment || submitting) return;
 
     setSubmitting(true);
-
     try {
-      // Calculate score
+      // Calculate score and prepare answers
       let totalScore = 0;
       let totalPoints = 0;
+      const userAnswers = [];
 
       for (const question of questions) {
-        totalPoints += question.points;
-        const userAnswer = answers[question.id];
-        const isCorrect = userAnswer?.trim() === question.correct_answer?.trim();
+        const userAnswer = answers[question.id] || '';
+        const isCorrect = userAnswer.trim() === question.correct_answer.trim();
+        const pointsEarned = isCorrect ? question.points : 0;
         
-        if (isCorrect) {
-          totalScore += question.points;
-        }
+        totalScore += pointsEarned;
+        totalPoints += question.points;
 
-        // Update user answer with correctness and points
-        await supabase
-          .from('user_answers')
-          .upsert({
-            user_assessment_id: userAssessment.id,
-            question_id: question.id,
-            user_answer: userAnswer || '',
-            is_correct: isCorrect,
-            points_earned: isCorrect ? question.points : 0,
-          });
+        userAnswers.push({
+          question_id: question.id,
+          user_answer: userAnswer,
+          is_correct: isCorrect,
+          points_earned: pointsEarned
+        });
       }
 
-      // Update user assessment to completed
-      const timeTaken = Math.ceil((assessment!.duration_minutes * 60 - timeRemaining) / 60);
-      
-      const { error: updateError } = await supabase
+      // Create user assessment record
+      const { data: userAssessment, error: assessmentError } = await supabase
         .from('user_assessments')
-        .update({
+        .insert({
+          user_id: user.id,
+          assessment_id: assessment.id,
           status: 'completed',
           score: totalScore,
           total_points: totalPoints,
-          time_taken_minutes: timeTaken,
-          completed_at: new Date().toISOString(),
+          time_taken_minutes: Math.ceil((assessment.duration_minutes * 60 - timeLeft) / 60),
+          completed_at: new Date().toISOString()
         })
-        .eq('id', userAssessment.id);
+        .select()
+        .single();
 
-      if (updateError) throw updateError;
+      if (assessmentError) throw assessmentError;
+
+      // Save individual answers
+      const answersWithAssessmentId = userAnswers.map(answer => ({
+        ...answer,
+        user_assessment_id: userAssessment.id
+      }));
+
+      const { error: answersError } = await supabase
+        .from('user_answers')
+        .insert(answersWithAssessmentId);
+
+      if (answersError) throw answersError;
 
       toast.success('Assessment completed successfully!');
-      
-      // Navigate to results page with the user assessment data
-      navigate(`/assessments/${assessment.id}/results`, { 
-        state: { 
-          userAssessmentId: userAssessment.id,
-          fromSubmission: true
-        }
+      navigate(`/assessments/${assessment.id}/results`, {
+        state: { userAssessmentId: userAssessment.id, justSubmitted: true }
       });
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error submitting assessment:', error);
-      toast.error('Failed to submit assessment. Please try again.');
+      toast.error('Failed to submit assessment');
     } finally {
       setSubmitting(false);
     }
@@ -289,25 +186,25 @@ export function AssessmentTaking() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading assessment...</p>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Loading assessment...</p>
         </div>
       </div>
     );
   }
 
-  if (error || !assessment || !questions.length) {
+  if (!assessment || questions.length === 0) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
-          <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
-          <h2 className="text-xl font-semibold text-gray-900 mb-2">Assessment Not Available</h2>
-          <p className="text-gray-600 mb-4">{error || 'This assessment could not be loaded.'}</p>
+          <XCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
+          <h2 className="text-xl font-semibold text-gray-900 mb-2">Assessment Not Found</h2>
+          <p className="text-gray-600 mb-4">The assessment you're looking for doesn't exist.</p>
           <button
             onClick={() => navigate('/assessments')}
-            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
           >
             Back to Assessments
           </button>
@@ -318,12 +215,13 @@ export function AssessmentTaking() {
 
   const currentQuestion = questions[currentQuestionIndex];
   const progress = ((currentQuestionIndex + 1) / questions.length) * 100;
+  const answeredCount = Object.keys(answers).length;
 
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
-      <div className="bg-white shadow-sm border-b border-gray-200 sticky top-0 z-10">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+      <div className="bg-white shadow-sm border-b">
+        <div className="max-w-4xl mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-xl font-semibold text-gray-900">{assessment.title}</h1>
@@ -334,25 +232,21 @@ export function AssessmentTaking() {
             <div className="flex items-center space-x-4">
               <div className="flex items-center text-sm text-gray-600">
                 <Clock className="h-4 w-4 mr-1" />
-                <span className={timeRemaining < 300 ? 'text-red-600 font-medium' : ''}>
-                  {formatTime(timeRemaining)}
+                <span className={timeLeft < 300 ? 'text-red-600 font-semibold' : ''}>
+                  {formatTime(timeLeft)}
                 </span>
               </div>
-              <button
-                onClick={handleSubmitAssessment}
-                disabled={submitting}
-                className="bg-gradient-to-r from-blue-600 to-purple-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:from-blue-700 hover:to-purple-700 transition-all duration-200 disabled:opacity-50"
-              >
-                {submitting ? 'Submitting...' : 'Submit Assessment'}
-              </button>
+              <div className="text-sm text-gray-600">
+                Answered: {answeredCount}/{questions.length}
+              </div>
             </div>
           </div>
           
           {/* Progress Bar */}
           <div className="mt-4">
-            <div className="bg-gray-200 rounded-full h-2">
-              <div 
-                className="bg-gradient-to-r from-blue-600 to-purple-600 h-2 rounded-full transition-all duration-300"
+            <div className="w-full bg-gray-200 rounded-full h-2">
+              <div
+                className="bg-blue-600 h-2 rounded-full transition-all duration-300"
                 style={{ width: `${progress}%` }}
               ></div>
             </div>
@@ -361,85 +255,107 @@ export function AssessmentTaking() {
       </div>
 
       {/* Question Content */}
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8">
+      <div className="max-w-4xl mx-auto px-4 py-8">
+        <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
           <div className="mb-6">
-            <h2 className="text-lg font-medium text-gray-900 mb-4">
+            <div className="flex items-center mb-4">
+              <span className="bg-blue-100 text-blue-800 text-sm font-medium px-3 py-1 rounded-full">
+                Question {currentQuestionIndex + 1}
+              </span>
+              <span className="ml-2 text-sm text-gray-500">
+                {currentQuestion.points} points
+              </span>
+            </div>
+            <h2 className="text-lg font-medium text-gray-900 leading-relaxed">
               {currentQuestion.question_text}
             </h2>
-            
-            {currentQuestion.question_type === 'multiple_choice' && currentQuestion.options && (
-              <div className="space-y-3">
-                {currentQuestion.options.map((option, index) => (
-                  <label key={index} className="flex items-center space-x-3 p-3 border border-gray-200 rounded-lg hover:bg-gray-50 cursor-pointer">
-                    <input
-                      type="radio"
-                      name={`question-${currentQuestion.id}`}
-                      value={option}
-                      checked={answers[currentQuestion.id] === option}
-                      onChange={(e) => handleAnswerChange(currentQuestion.id, e.target.value)}
-                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
-                    />
-                    <span className="text-gray-700">{option}</span>
-                  </label>
-                ))}
-              </div>
-            )}
-
-            {currentQuestion.question_type === 'true_false' && (
-              <div className="space-y-3">
-                {['True', 'False'].map((option) => (
-                  <label key={option} className="flex items-center space-x-3 p-3 border border-gray-200 rounded-lg hover:bg-gray-50 cursor-pointer">
-                    <input
-                      type="radio"
-                      name={`question-${currentQuestion.id}`}
-                      value={option}
-                      checked={answers[currentQuestion.id] === option}
-                      onChange={(e) => handleAnswerChange(currentQuestion.id, e.target.value)}
-                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
-                    />
-                    <span className="text-gray-700">{option}</span>
-                  </label>
-                ))}
-              </div>
-            )}
           </div>
 
-          {/* Navigation */}
-          <div className="flex items-center justify-between pt-6 border-t border-gray-200">
-            <button
-              onClick={() => setCurrentQuestionIndex(Math.max(0, currentQuestionIndex - 1))}
-              disabled={currentQuestionIndex === 0}
-              className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Previous
-            </button>
-            
-            <div className="flex items-center space-x-2">
-              {questions.map((_, index) => (
-                <button
-                  key={index}
-                  onClick={() => setCurrentQuestionIndex(index)}
-                  className={`w-8 h-8 rounded-full text-sm font-medium ${
-                    index === currentQuestionIndex
-                      ? 'bg-blue-600 text-white'
-                      : answers[questions[index].id]
-                      ? 'bg-green-100 text-green-800'
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                  }`}
-                >
-                  {index + 1}
-                </button>
-              ))}
-            </div>
+          {/* Answer Options */}
+          <div className="space-y-3">
+            {currentQuestion.options.map((option, index) => (
+              <label
+                key={index}
+                className={`flex items-center p-4 border rounded-lg cursor-pointer transition-colors ${
+                  answers[currentQuestion.id] === option
+                    ? 'border-blue-500 bg-blue-50'
+                    : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name={`question-${currentQuestion.id}`}
+                  value={option}
+                  checked={answers[currentQuestion.id] === option}
+                  onChange={(e) => handleAnswerSelect(e.target.value)}
+                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
+                />
+                <span className="ml-3 text-gray-900">{option}</span>
+              </label>
+            ))}
+          </div>
+        </div>
 
-            <button
-              onClick={() => setCurrentQuestionIndex(Math.min(questions.length - 1, currentQuestionIndex + 1))}
-              disabled={currentQuestionIndex === questions.length - 1}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Next
-            </button>
+        {/* Navigation */}
+        <div className="flex items-center justify-between">
+          <button
+            onClick={handlePrevious}
+            disabled={currentQuestionIndex === 0}
+            className="flex items-center px-4 py-2 text-gray-600 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Previous
+          </button>
+
+          <div className="flex space-x-3">
+            {currentQuestionIndex === questions.length - 1 ? (
+              <button
+                onClick={handleSubmit}
+                disabled={submitting}
+                className="flex items-center px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
+              >
+                {submitting ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                    Submitting...
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle className="h-4 w-4 mr-2" />
+                    Submit Assessment
+                  </>
+                )}
+              </button>
+            ) : (
+              <button
+                onClick={handleNext}
+                className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+              >
+                Next
+                <ArrowRight className="h-4 w-4 ml-2" />
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Question Navigation */}
+        <div className="mt-8 bg-white rounded-lg shadow-sm p-4">
+          <h3 className="text-sm font-medium text-gray-900 mb-3">Question Navigation</h3>
+          <div className="grid grid-cols-10 gap-2">
+            {questions.map((_, index) => (
+              <button
+                key={index}
+                onClick={() => setCurrentQuestionIndex(index)}
+                className={`w-8 h-8 text-xs rounded-full border-2 transition-colors ${
+                  index === currentQuestionIndex
+                    ? 'border-blue-500 bg-blue-500 text-white'
+                    : answers[questions[index].id]
+                    ? 'border-green-500 bg-green-500 text-white'
+                    : 'border-gray-300 bg-white text-gray-700 hover:border-gray-400'
+                }`}
+              >
+                {index + 1}
+              </button>
+            ))}
           </div>
         </div>
       </div>

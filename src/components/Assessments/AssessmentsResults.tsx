@@ -119,6 +119,10 @@ export function AssessmentResults() {
         .select('*')
         .eq('user_assessment_id', targetUserAssessmentId);
 
+
+      console.log(targetUserAssessmentId);
+      console.log(userAnswersData);
+
       if (userAnswersError) throw userAnswersError;
 
       setData({
@@ -277,7 +281,9 @@ export function AssessmentResults() {
           
           <div className="space-y-6">
             {questions.map((question, index) => {
-              const userAnswer = userAnswers.find(ua => ua.question_id === question.id);
+              const userAnswer = userAnswers.find((ua) => {
+                return ua.question_id === question.id
+              });
               const isCorrect = userAnswer?.is_correct;
               const userResponse = userAnswer?.user_answer || '';
               const pointsEarned = userAnswer?.points_earned || 0;
